@@ -117,10 +117,18 @@ func (c *Client) doRequest(ctx context.Context, method, url string, body any) ([
 				return nil, ctx.Err()
 			case <-time.After(wait):
 			}
-			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(data[:min(len(data), 200)]))
+			snippet := "(empty body)"
+			if len(data) > 0 {
+				snippet = string(data[:min(len(data), 200)])
+			}
+			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, snippet)
 			continue
 		case resp.StatusCode >= 400:
-			return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, string(data[:min(len(data), 300)]))
+			snippet := "(empty body)"
+			if len(data) > 0 {
+				snippet = string(data[:min(len(data), 300)])
+			}
+			return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, snippet)
 		}
 
 		return data, nil
