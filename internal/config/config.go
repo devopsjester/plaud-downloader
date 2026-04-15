@@ -23,9 +23,8 @@ const (
 // If configFile is non-empty, it is used exclusively; otherwise, standard
 // search paths are used.
 func Setup(configFile string) error {
-	viper.SetConfigType("yaml")
-
 	if configFile != "" {
+		viper.SetConfigType("yaml")
 		viper.SetConfigFile(configFile)
 	} else {
 		// Search in current directory first, then XDG config.
@@ -87,7 +86,7 @@ func SaveToken(token string) (string, error) {
 		return "", fmt.Errorf("create config directory: %w", err)
 	}
 
-	path := filepath.Join(dir, "config.yaml")
+	path := filepath.Join(dir, "plaud-downloader.yaml")
 
 	// Read existing config if present, update token.
 	v := viper.New()
