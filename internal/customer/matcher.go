@@ -1,6 +1,9 @@
 package customer
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
 // Confidence levels for a customer match.
 const (
@@ -84,8 +87,42 @@ func matchCustomer(c *Customer, titleLower, bodyLower string) string {
 	return ""
 }
 
-// containsWord returns true if text contains term as a substring.
-// Uses simple substring match since customer names are usually distinctive.
+// containsWord returns true if text contains term bounded by non-alphanumeric
+// characters (or the start/end of the string). Both text and term should be
+// lower-cased by the caller.
 func containsWord(text, term string) bool {
-	return strings.Contains(text, term)
+	if term == "" {
+		return false
+	}
+	termRunes := []rune(term)
+	textRunes := []rune(text)
+	termLen := len(termRunes)
+	textLen := len(textRunes)
+
+	for i := 0; i <= textLen-termLen; i++ {
+		// Quick check: first rune must match.
+		if textRunes[i] != termRunes[0] {
+			continue
+		}
+		// Compare the full term.
+		if string(textRunes[i:i+termLen]) != term {
+			continue
+		}
+		// Check left boundary.
+		if i > 0 && isWordChar(textRunes[i-1]) {
+			continue
+		}
+		// Check right boundary.
+		end := i + termLen
+		if end < textLen && isWordChar(textRunes[end]) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// isWordChar returns true for runes that are letters or digits.
+func isWordChar(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
 }

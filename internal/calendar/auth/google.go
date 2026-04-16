@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,7 +17,9 @@ const (
 	googleTokenURL      = "https://oauth2.googleapis.com/token"
 
 	// googleScope is the minimum scope needed to read calendar events.
-	googleScope = "https://www.googleapis.com/auth/calendar.events.readonly"
+	// Note: calendar.events.readonly is not permitted for the device-code flow
+	// on TV/Limited Input clients; calendar.readonly covers the same read access.
+	googleScope = "https://www.googleapis.com/auth/calendar.readonly"
 )
 
 type googleDeviceCodeResponse struct {
@@ -97,7 +100,8 @@ func requestGoogleDeviceCode(ctx context.Context, client *http.Client, clientID 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, 0, fmt.Errorf("device-code endpoint: unexpected status %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, 0, fmt.Errorf("device-code endpoint: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	var dc googleDeviceCodeResponse

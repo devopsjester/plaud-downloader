@@ -3,8 +3,6 @@
 // Tokens are persisted under the same config file as the Plaud token, using
 // Viper keys:
 //
-//	calendar.m365.access_token
-//	calendar.m365.refresh_token
 //	calendar.google.access_token
 //	calendar.google.refresh_token
 //
@@ -20,7 +18,7 @@ import (
 )
 
 // SaveCalendarToken persists the access and refresh tokens for the given
-// provider to the shared config file. provider must be "m365" or "google".
+// provider to the shared config file. provider must be "google".
 func SaveCalendarToken(provider, accessToken, refreshToken string) error {
 	if err := validateProvider(provider); err != nil {
 		return err
@@ -58,7 +56,7 @@ func SaveCalendarToken(provider, accessToken, refreshToken string) error {
 }
 
 // LoadCalendarToken reads the access and refresh tokens for the given provider
-// from the config file. provider must be "m365" or "google".
+// from the config file. provider must be "google".
 // Returns empty strings without an error when no tokens have been stored yet.
 func LoadCalendarToken(provider string) (accessToken, refreshToken string, err error) {
 	if err := validateProvider(provider); err != nil {
@@ -94,10 +92,8 @@ func LoadCalendarToken(provider string) (accessToken, refreshToken string, err e
 // validateProvider returns an error for unrecognised provider strings.
 // This is a defense-in-depth check; callers should use the named constants.
 func validateProvider(provider string) error {
-	switch provider {
-	case "m365", "google":
+	if provider == "google" {
 		return nil
-	default:
-		return fmt.Errorf("unknown calendar provider %q: must be \"m365\" or \"google\"", provider)
 	}
+	return fmt.Errorf("unknown calendar provider %q: must be \"google\"", provider)
 }

@@ -15,8 +15,6 @@ type Customer struct {
 	Name string `yaml:"name"`
 	// Aliases are additional terms to match (e.g. "McDonald's", "mcd").
 	Aliases []string `yaml:"aliases,omitempty"`
-	// Domains are email domains associated with this customer (reserved for future use).
-	Domains []string `yaml:"domains,omitempty"`
 }
 
 // allTerms returns a lowercase slice of the canonical name plus all aliases.

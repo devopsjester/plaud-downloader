@@ -2,12 +2,15 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"strings"
 
+	calauth "github.com/devopsjester/plaud-hub/internal/calendar/auth"
 	"github.com/devopsjester/plaud-hub/internal/config"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 var authCmd = &cobra.Command{
@@ -32,6 +35,7 @@ To get the token:
 func init() {
 	rootCmd.AddCommand(authCmd)
 	authCmd.AddCommand(authSetupCmd)
+	authCmd.AddCommand(authSetupGoogleCmd)
 }
 
 func runAuthSetup(_ *cobra.Command, _ []string) error {
@@ -59,5 +63,43 @@ func runAuthSetup(_ *cobra.Command, _ []string) error {
 	}
 
 	fmt.Printf("Token saved to %s\n", path)
+	return nil
+}
+
+var authSetupGoogleCmd = &cobra.Command{
+	Use:   "setup-google",
+	Short: "Authorize plaud-hub to read your Google Calendar",
+	Long: `Runs the OAuth 2.0 device-code flow for Google Calendar.
+
+Reads client_id and client_secret from:
+  ~/.config/plaud-hub/plaud-hub.yaml  (keys: calendar.google.client_id / client_secret)
+
+On success, stores the access and refresh tokens in the same config file.`,
+	RunE: runAuthSetupGoogle,
+}
+
+func runAuthSetupGoogle(_ *cobra.Command, _ []string) error {
+	clientID := viper.GetString("calendar.google.client_id")
+	clientSecret := viper.GetString("calendar.google.client_secret")
+
+	if clientID == "" {
+		return fmt.Errorf("calendar.google.client_id not set in config — add it to ~/.config/plaud-hub/plaud-hub.yaml")
+	}
+	if clientSecret == "" {
+		return fmt.Errorf("calendar.google.client_secret not set in config — add it to ~/.config/plaud-hub/plaud-hub.yaml")
+	}
+
+	fmt.Println("Starting Google Calendar authorization...")
+
+	accessToken, refreshToken, err := calauth.AuthorizeGoogle(context.Background(), clientID, clientSecret)
+	if err != nil {
+		return fmt.Errorf("Google authorization failed: %w", err)
+	}
+
+	if err := config.SaveCalendarToken("google", accessToken, refreshToken); err != nil {
+		return fmt.Errorf("save tokens: %w", err)
+	}
+
+	fmt.Println("Google Calendar authorized successfully.")
 	return nil
 }

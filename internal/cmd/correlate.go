@@ -1,12 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/devopsjester/plaud-hub/internal/calendar"
+	googlecal "github.com/devopsjester/plaud-hub/internal/calendar/google"
 	"github.com/devopsjester/plaud-hub/internal/config"
 	"github.com/devopsjester/plaud-hub/internal/customer"
 	"github.com/spf13/cobra"
@@ -20,18 +24,13 @@ var correlateCmd = &cobra.Command{
 which customer(s) each recording relates to using a customer registry YAML file,
 and copies (or moves) the files into output/customers/{CustomerName}/ subfolders.
 
-When a recording mentions multiple customers, files are copied to each customer
-folder. Use --move to remove the originals from the output root after copying.
+Both the summary and transcript are searched for customer names. When
+--calendar google is specified, calendar events are fetched for each recording's
+date and attendee email domains are matched against the customers file to confirm
+or add customer matches.
 
-Example registry file (customers.yaml):
-
-  customers:
-    - name: McDonalds
-      aliases: ["McDonald's", "mcd"]
-    - name: Nextera
-      aliases: ["NextEra Energy"]
-    - name: SLB
-      aliases: ["Schlumberger"]`,
+When a recording matches multiple customers, files are copied to each folder.
+Use --move to remove the originals from the output root after copying.`,
 	RunE: runCorrelate,
 }
 
@@ -41,6 +40,8 @@ func init() {
 	correlateCmd.Flags().String("customers-file", "", "path to customer registry YAML file (required)")
 	correlateCmd.Flags().Bool("move", false, "move files instead of copying (removes originals from output root)")
 	correlateCmd.Flags().String("min-confidence", customer.ConfidenceMedium, "minimum confidence level to act on: high, medium, or low")
+	correlateCmd.Flags().String("calendar", "", "confirm matches via calendar: google (optional)")
+	correlateCmd.Flags().Duration("calendar-tolerance", 15*time.Minute, "time window around recording start to search for a matching calendar event")
 
 	_ = correlateCmd.MarkFlagRequired("customers-file")
 	_ = viper.BindPFlag("output_dir", correlateCmd.Flags().Lookup("output-dir"))
@@ -53,9 +54,14 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 	customersFile, _ := cmd.Flags().GetString("customers-file")
 	moveFiles, _ := cmd.Flags().GetBool("move")
 	minConf, _ := cmd.Flags().GetString("min-confidence")
+	calProvider, _ := cmd.Flags().GetString("calendar")
+	calTolerance, _ := cmd.Flags().GetDuration("calendar-tolerance")
 
 	if customer.ConfidenceRank(minConf) == 0 {
 		return fmt.Errorf("invalid --min-confidence %q: must be high, medium, or low", minConf)
+	}
+	if calProvider != "" && calProvider != "google" {
+		return fmt.Errorf("invalid --calendar %q: only \"google\" is supported", calProvider)
 	}
 
 	registry, err := customer.LoadRegistry(customersFile)
@@ -64,6 +70,20 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 	}
 	if len(registry.Customers) == 0 {
 		return fmt.Errorf("customers file %q contains no customers", customersFile)
+	}
+
+	// Optionally build a Google Calendar client.
+	var calClient *googlecal.Client
+	if calProvider == "google" {
+		accessToken, _, err := config.LoadCalendarToken("google")
+		if err != nil {
+			return fmt.Errorf("load Google Calendar token: %w", err)
+		}
+		if accessToken == "" {
+			return fmt.Errorf("no Google Calendar token found — run: plaud-hub auth setup-google")
+		}
+		calClient = googlecal.NewClient(accessToken)
+		logger.Info("Google Calendar enabled", "tolerance", calTolerance)
 	}
 
 	// Gather all summary files in the output root (not in subdirs).
@@ -80,11 +100,19 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 	var placed, skipped int
 
 	for _, summaryPath := range summaries {
-		matches, err := customer.CorrelateFile(summaryPath, registry)
+		base := filepath.Base(summaryPath)
+
+		// Match against both summary and transcript.
+		matches, err := customer.CorrelateFileCombined(summaryPath, registry)
 		if err != nil {
-			logger.Warn("skipping (parse error)", "file", filepath.Base(summaryPath), "err", err)
+			logger.Warn("skipping (parse error)", "file", base, "err", err)
 			skipped++
 			continue
+		}
+
+		// Optionally log the matching calendar event (informational only).
+		if calClient != nil {
+			logCalendarMatch(cmd.Context(), calClient, summaryPath, calTolerance, logger)
 		}
 
 		// Filter to eligible matches.
@@ -95,7 +123,7 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		if len(eligible) == 0 {
-			logger.Debug("no customer match", "file", filepath.Base(summaryPath))
+			logger.Debug("no customer match", "file", base)
 			skipped++
 			continue
 		}
@@ -106,20 +134,17 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 		hasTranscript := transcriptErr == nil
 
 		// Copy (or move) to every matched customer folder.
-		// When moving and multi-customer, we copy to all then remove originals.
 		for _, m := range eligible {
 			destDir := customer.CustomerOutputDir(outputDir, m.Customer.Name)
 			if err := os.MkdirAll(destDir, 0o755); err != nil {
 				return fmt.Errorf("create customer dir %q: %w", destDir, err)
 			}
 
-			// For single-customer + --move, we can use rename. For multi-customer
-			// we always copy first and remove originals after the loop.
 			useRename := moveFiles && len(eligible) == 1
 
 			summaryDest := filepath.Join(destDir, filepath.Base(summaryPath))
 			if err := copyOrMoveFile(summaryPath, summaryDest, useRename); err != nil {
-				logger.Warn("failed to place summary", "file", filepath.Base(summaryPath), "customer", m.Customer.Name, "err", err)
+				logger.Warn("failed to place summary", "file", base, "customer", m.Customer.Name, "err", err)
 				continue
 			}
 
@@ -131,14 +156,14 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 			}
 
 			logger.Info("placed",
-				"file", filepath.Base(summaryPath),
+				"file", base,
 				"customer", m.Customer.Name,
 				"confidence", m.Confidence,
 			)
 			placed++
 		}
 
-		// Multi-customer + --move: remove originals after all copies succeeded.
+		// Multi-customer + --move: remove originals after all copies.
 		if moveFiles && len(eligible) > 1 {
 			_ = os.Remove(summaryPath)
 			if hasTranscript {
@@ -149,6 +174,46 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 
 	fmt.Printf("\nCorrelation complete: %d recording(s) placed, %d skipped (no match)\n", placed, skipped)
 	return nil
+}
+
+// logCalendarMatch fetches Google Calendar events for the recording's date and
+// logs the matching event title if one is found. It does not affect customer
+// matching — calendar is used for informational confirmation only.
+func logCalendarMatch(
+	ctx context.Context,
+	client *googlecal.Client,
+	summaryPath string,
+	tolerance time.Duration,
+	logger interface {
+		Warn(string, ...any)
+		Debug(string, ...any)
+	},
+) {
+	recDate, err := customer.ParseRecordingDate(summaryPath)
+	if err != nil || recDate.IsZero() {
+		return
+	}
+
+	from := recDate.Add(-24 * time.Hour)
+	to := recDate.Add(48 * time.Hour)
+
+	events, err := client.ListEvents(ctx, from, to)
+	if err != nil {
+		logger.Warn("calendar lookup failed", "file", filepath.Base(summaryPath), "err", err)
+		return
+	}
+
+	recordingStart := recDate.Add(12 * time.Hour)
+	matched := calendar.MatchRecording(recordingStart, events, tolerance)
+	if matched == nil {
+		logger.Debug("no calendar event matched", "file", filepath.Base(summaryPath))
+		return
+	}
+
+	logger.Debug("calendar event matched",
+		"file", filepath.Base(summaryPath),
+		"event", matched.Title,
+	)
 }
 
 // copyOrMoveFile copies src to dst, or renames if move is true.
