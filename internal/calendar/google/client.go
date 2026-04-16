@@ -96,7 +96,7 @@ func (c *Client) ListEvents(ctx context.Context, from, to time.Time) ([]calendar
 	q := u.Query()
 	q.Set("timeMin", timeMin)
 	q.Set("timeMax", timeMax)
-	q.Set("singleEvents", "true")  // expand recurring events
+	q.Set("singleEvents", "true") // expand recurring events
 	q.Set("orderBy", "startTime")
 	u.RawQuery = q.Encode()
 
