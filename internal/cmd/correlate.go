@@ -47,16 +47,17 @@ customer folder receives only their relevant content.`,
 
 func init() {
 	rootCmd.AddCommand(correlateCmd)
-	correlateCmd.Flags().String("output-dir", config.DefaultOutputDir, "directory containing downloaded files")
+	correlateCmd.Flags().String("output-dir", config.DefaultOutputDir, "root output directory (expects downloaded/ subdir as input)")
 	correlateCmd.Flags().String("customers-file", "", "path to customer registry YAML file (required)")
 	correlateCmd.Flags().Bool("keep", false, "keep originals in output root (default is to move)")
 	correlateCmd.Flags().String("min-confidence", customer.ConfidenceMedium, "minimum confidence level to act on: high, medium, or low")
-	correlateCmd.Flags().String("calendar", "", "confirm matches via calendar attendees: reclaim or google")
+	correlateCmd.Flags().String("calendar", "", "calendar provider to use: reclaim or google (default from config: reclaim)")
 	correlateCmd.Flags().Duration("calendar-tolerance", 15*time.Minute, "time window around recording start to search for a matching calendar event")
 	correlateCmd.Flags().String("split-llm", "", "use LLM to split multi-customer summaries: github")
 
 	_ = correlateCmd.MarkFlagRequired("customers-file")
 	_ = viper.BindPFlag("output_dir", correlateCmd.Flags().Lookup("output-dir"))
+	_ = viper.BindPFlag("calendar_provider", correlateCmd.Flags().Lookup("calendar"))
 }
 
 func runCorrelate(cmd *cobra.Command, _ []string) error {
@@ -67,7 +68,11 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 	keepFiles, _ := cmd.Flags().GetBool("keep")
 	moveFiles := !keepFiles
 	minConf, _ := cmd.Flags().GetString("min-confidence")
-	calProvider, _ := cmd.Flags().GetString("calendar")
+	// Resolve calendar provider: explicit flag > config file > default (reclaim).
+	calProvider := viper.GetString("calendar_provider")
+	if flagVal, _ := cmd.Flags().GetString("calendar"); cmd.Flags().Changed("calendar") {
+		calProvider = flagVal
+	}
 	calTolerance, _ := cmd.Flags().GetDuration("calendar-tolerance")
 	splitLLM, _ := cmd.Flags().GetString("split-llm")
 
@@ -127,13 +132,14 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 		llmClient = llm.NewGitHubClient(ghToken, "")
 	}
 
-	// Gather all summary files in the output root (not in subdirs).
-	summaries, err := filepath.Glob(filepath.Join(outputDir, "*_summary.md"))
+	// Gather all summary files from the downloaded/ subdir.
+	downloadedDir := customer.DownloadedDir(outputDir)
+	summaries, err := filepath.Glob(filepath.Join(downloadedDir, "*_summary.md"))
 	if err != nil {
-		return fmt.Errorf("scan output dir: %w", err)
+		return fmt.Errorf("scan downloaded dir: %w", err)
 	}
 	if len(summaries) == 0 {
-		logger.Info("no summary files found", "dir", outputDir)
+		logger.Info("no summary files found", "dir", downloadedDir)
 		return nil
 	}
 
@@ -142,6 +148,14 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 
 	for _, summaryPath := range summaries {
 		base := filepath.Base(summaryPath)
+
+		// Parse recording info early — we need the timestamp for output dirs
+		// and the body for LLM splitting. Falls back gracefully if parsing fails.
+		recInfo, _ := customer.ParseRecordingInfo(summaryPath)
+		recTime := recInfo.Start
+		if recTime.IsZero() {
+			recTime = time.Now()
+		}
 
 		var matches []customer.Match
 
@@ -180,7 +194,18 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 			}
 		}
 		if len(eligible) == 0 {
+			// No customer match — route to processed/unmatched/YYYY-MM/.
 			logger.Debug("no customer match", "file", base)
+			unmatchedDir := customer.UnmatchedOutputDir(outputDir, recTime)
+			if mkErr := os.MkdirAll(unmatchedDir, 0o755); mkErr != nil {
+				return fmt.Errorf("create unmatched dir %q: %w", unmatchedDir, mkErr)
+			}
+			unmatchedDest := filepath.Join(unmatchedDir, base)
+			if cpErr := copyOrMoveFile(summaryPath, unmatchedDest, moveFiles); cpErr != nil {
+				logger.Warn("failed to move unmatched file", "file", base, "err", cpErr)
+			} else {
+				logger.Info("unmatched", "file", base, "dest", unmatchedDest)
+			}
 			skipped++
 			continue
 		}
@@ -188,12 +213,11 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 		// LLM-split path: multiple customers with an LLM configured.
 		if llmClient != nil && len(eligible) > 1 {
 			handled := false
-			info, infoErr := customer.ParseRecordingInfo(summaryPath)
-			if infoErr == nil {
-				splits, splitErr := customer.SplitByLLM(cmd.Context(), llmClient, info.Body, eligible)
+			if recInfo.Body != "" {
+				splits, otherBody, splitErr := customer.SplitByLLM(cmd.Context(), llmClient, recInfo.Body, eligible)
 				if splitErr == nil {
 					for _, sr := range splits {
-						destDir := customer.CustomerOutputDir(outputDir, sr.CustomerName)
+						destDir := customer.CustomerOutputDir(outputDir, sr.CustomerName, recTime)
 						if err := os.MkdirAll(destDir, 0o755); err != nil {
 							return fmt.Errorf("create customer dir %q: %w", destDir, err)
 						}
@@ -220,6 +244,23 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 						)
 						placed++
 					}
+
+					// Write "other" (non-customer) content to processed/internal/YYYY-MM/.
+					if strings.TrimSpace(otherBody) != "" {
+						internalDir := customer.InternalOutputDir(outputDir, recTime)
+						if mkErr := os.MkdirAll(internalDir, 0o755); mkErr != nil {
+							return fmt.Errorf("create internal dir %q: %w", internalDir, mkErr)
+						}
+						internalDest := filepath.Join(internalDir, base)
+						content, buildErr := buildLeftoverContent(summaryPath, otherBody)
+						if buildErr == nil {
+							if writeErr := writeTempThenRename(internalDest, content); writeErr != nil {
+								logger.Warn("failed to write internal content", "file", base, "err", writeErr)
+							} else {
+								logger.Info("internal content placed", "file", base, "dest", internalDest)
+							}
+						}
+					}
 					if moveFiles {
 						_ = os.Remove(summaryPath)
 					}
@@ -228,7 +269,7 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 					logger.Warn("LLM split failed — falling back to full copy", "file", base, "err", splitErr)
 				}
 			} else {
-				logger.Warn("failed to parse recording for LLM split — falling back", "file", base, "err", infoErr)
+				logger.Warn("failed to parse recording body for LLM split — falling back", "file", base)
 			}
 			if handled {
 				continue
@@ -237,7 +278,7 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 
 		// Copy (or move) summary to every matched customer folder.
 		for _, m := range eligible {
-			destDir := customer.CustomerOutputDir(outputDir, m.Customer.Name)
+			destDir := customer.CustomerOutputDir(outputDir, m.Customer.Name, recTime)
 			if err := os.MkdirAll(destDir, 0o755); err != nil {
 				return fmt.Errorf("create customer dir %q: %w", destDir, err)
 			}
@@ -306,7 +347,11 @@ func buildSplitContent(originalPath, customerName, splitBody string) ([]byte, er
 			if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
 				val = val[1 : len(val)-1]
 			}
-			fmt.Fprintf(&sb, "title: \"%s \u2014 %s\"\n", val, customerName)
+			if customerName != "" {
+				fmt.Fprintf(&sb, "title: \"%s \u2014 %s\"\n", val, customerName)
+			} else {
+				fmt.Fprintf(&sb, "title: \"%s\"\n", val)
+			}
 		} else {
 			sb.WriteString(line)
 			sb.WriteByte('\n')
@@ -316,6 +361,40 @@ func buildSplitContent(originalPath, customerName, splitBody string) ([]byte, er
 	sb.WriteString("---\n")
 	sb.WriteString(splitBody)
 
+	return []byte(sb.String()), nil
+}
+
+// buildLeftoverContent rebuilds a file preserving its original front matter
+// but replacing the body with the LLM's "other" content. Does not modify the
+// title or add a source_recording field.
+func buildLeftoverContent(originalPath, otherBody string) ([]byte, error) {
+	data, err := os.ReadFile(originalPath)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", originalPath, err)
+	}
+
+	lines := strings.Split(string(data), "\n")
+	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {
+		return []byte(otherBody), nil
+	}
+
+	endFM := -1
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "---" {
+			endFM = i
+			break
+		}
+	}
+	if endFM == -1 {
+		return []byte(otherBody), nil
+	}
+
+	var sb strings.Builder
+	for i := 0; i <= endFM; i++ {
+		sb.WriteString(lines[i])
+		sb.WriteByte('\n')
+	}
+	sb.WriteString(otherBody)
 	return []byte(sb.String()), nil
 }
 

@@ -17,6 +17,23 @@ const (
 	DefaultOutputDir   = "./output"
 	DefaultConcurrency = 5
 	DefaultType        = "all"
+
+	// Subdirectory layout under DefaultOutputDir:
+	//   output/
+	//   ├── downloaded/              ← raw files from `download` command
+	//   └── processed/
+	//       ├── customers/{Name}/YYYY-MM/  ← matched customer content
+	//       ├── internal/YYYY-MM/          ← LLM split "other" / internal notes
+	//       └── unmatched/YYYY-MM/         ← recordings with no customer match
+	SubdirDownloaded = "downloaded"
+	SubdirProcessed  = "processed"
+	SubdirCustomers  = "customers"
+	SubdirInternal   = "internal"
+	SubdirUnmatched  = "unmatched"
+
+	// DefaultCalendarProvider is used when --calendar is not explicitly passed.
+	// Valid values: "reclaim", "google", or "" to disable.
+	DefaultCalendarProvider = "reclaim"
 )
 
 // Setup initializes Viper with config file paths and environment bindings.
@@ -47,6 +64,7 @@ func Setup(configFile string) error {
 	viper.SetDefault("output_dir", DefaultOutputDir)
 	viper.SetDefault("concurrency", DefaultConcurrency)
 	viper.SetDefault("type", DefaultType)
+	viper.SetDefault("calendar_provider", DefaultCalendarProvider)
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
