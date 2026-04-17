@@ -21,7 +21,8 @@ var downloadCmd = &cobra.Command{
 	Long: `Download transcripts and/or AI summaries for your Plaud recordings
 and save them as Markdown files with YAML front matter.
 
-By default, downloads both transcripts and summaries. Use --type to filter.
+By default, downloads summaries only. Use --type all to also download transcripts,
+or --type transcript for transcripts only.
 Existing files are skipped unless --force is specified.`,
 	RunE: runDownload,
 }

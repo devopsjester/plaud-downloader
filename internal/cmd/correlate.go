@@ -10,11 +10,13 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/devopsjester/plaud-hub/internal/api"
 	"github.com/devopsjester/plaud-hub/internal/calendar"
 	googlecal "github.com/devopsjester/plaud-hub/internal/calendar/google"
 	reclaimcal "github.com/devopsjester/plaud-hub/internal/calendar/reclaim"
 	"github.com/devopsjester/plaud-hub/internal/config"
 	"github.com/devopsjester/plaud-hub/internal/customer"
+	"github.com/devopsjester/plaud-hub/internal/download"
 	"github.com/devopsjester/plaud-hub/internal/llm"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -146,6 +148,16 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 		llmClient = llm.NewGitHubClient(ghToken, "")
 	}
 
+	// Build a Plaud API client for JIT transcript downloads when split-LLM is active.
+	var plaudClient *api.Client
+	if splitLLM != "" {
+		tok, err := config.Token()
+		if err != nil {
+			return fmt.Errorf("load Plaud token for JIT transcript download: %w", err)
+		}
+		plaudClient = api.NewClient(tok, logger)
+	}
+
 	// Gather all summary files from the downloaded/ subdir.
 	downloadedDir := customer.DownloadedDir(outputDir)
 	summaries, err := filepath.Glob(filepath.Join(downloadedDir, "*_summary.md"))
@@ -262,8 +274,34 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 		// LLM-split path: multiple customers with an LLM configured.
 		if llmClient != nil && len(eligible) > 1 {
 			handled := false
-			if recInfo.Body != "" {
-				splits, otherBody, splitErr := customer.SplitByLLM(ctx, llmClient, recInfo.Body, eligible)
+
+			// Determine the richest body to pass to the LLM splitter.
+			// Prefer the transcript (verbatim content) over the summary body.
+			// If no transcript exists yet, download it just-in-time when possible.
+			splitBody := recInfo.Body
+			transcriptPath := strings.TrimSuffix(summaryPath, "_summary.md") + "_transcript.md"
+			if data, err := os.ReadFile(transcriptPath); err == nil {
+				splitBody = string(data)
+			} else if plaudClient != nil && recInfo.RecordingID != "" {
+				details, apiErr := plaudClient.GetRecordingDetails(ctx, []string{recInfo.RecordingID})
+				if apiErr == nil && len(details) > 0 {
+					segs, segErr := download.ParseTranscriptSegments(details[0].TransResult)
+					if segErr == nil {
+						if writtenPath, writeErr := download.WriteTranscript(downloadedDir, details[0], segs); writeErr == nil {
+							if data, readErr := os.ReadFile(writtenPath); readErr == nil {
+								splitBody = string(data)
+								logger.Info("JIT transcript downloaded for LLM split", "file", base)
+							}
+						}
+					}
+				}
+				if splitBody == recInfo.Body {
+					logger.Warn("JIT transcript fetch failed — using summary body for LLM split", "file", base)
+				}
+			}
+
+			if splitBody != "" {
+				splits, otherBody, splitErr := customer.SplitByLLM(ctx, llmClient, splitBody, eligible)
 				if splitErr == nil {
 					for _, sr := range splits {
 						destDir := customer.CustomerOutputDir(outputDir, sr.CustomerName, recTime)
@@ -318,7 +356,7 @@ func runCorrelate(cmd *cobra.Command, _ []string) error {
 					logger.Warn("LLM split failed — falling back to full copy", "file", base, "err", splitErr)
 				}
 			} else {
-				logger.Warn("failed to parse recording body for LLM split — falling back", "file", base)
+				logger.Warn("no body content available for LLM split — falling back to full copy", "file", base)
 			}
 			if handled {
 				continue

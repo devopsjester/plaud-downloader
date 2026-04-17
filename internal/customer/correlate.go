@@ -56,10 +56,11 @@ func ParseRecordingTitle(path string) (string, error) {
 
 // RecordingInfo contains the parsed front matter fields and body of a summary.
 type RecordingInfo struct {
-	Title    string
-	Start    time.Time     // from date: field (RFC3339)
-	Duration time.Duration // from duration: field (MM:SS or HH:MM:SS)
-	Body     string
+	RecordingID string
+	Title       string
+	Start       time.Time     // from date: field (RFC3339)
+	Duration    time.Duration // from duration: field (MM:SS or HH:MM:SS)
+	Body        string
 }
 
 // End returns the recording end time (Start + Duration), or Start when Duration is zero.
@@ -84,10 +85,11 @@ func ParseRecordingInfo(path string) (RecordingInfo, error) {
 		return RecordingInfo{}, err
 	}
 	return RecordingInfo{
-		Title:    fm.title,
-		Start:    fm.date,
-		Duration: fm.duration,
-		Body:     fm.body,
+		RecordingID: fm.recordingID,
+		Title:       fm.title,
+		Start:       fm.date,
+		Duration:    fm.duration,
+		Body:        fm.body,
 	}, nil
 }
 
@@ -156,10 +158,11 @@ func DownloadedDir(root string) string {
 
 // parsedFrontMatter holds the fields extracted from a YAML front matter block.
 type parsedFrontMatter struct {
-	title    string
-	body     string
-	date     time.Time
-	duration time.Duration
+	recordingID string
+	title       string
+	body         string
+	date         time.Time
+	duration     time.Duration
 }
 
 // parseFrontMatter reads a Markdown file and extracts YAML front matter fields
@@ -194,6 +197,8 @@ func parseFrontMatter(r io.Reader) (parsedFrontMatter, error) {
 		}
 		val := fmValue(line)
 		switch {
+		case strings.HasPrefix(line, "recording_id:"):
+			fm.recordingID = val
 		case strings.HasPrefix(line, "title:"):
 			fm.title = val
 		case strings.HasPrefix(line, "date:"):

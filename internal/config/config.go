@@ -16,7 +16,7 @@ import (
 const (
 	DefaultOutputDir   = "./output"
 	DefaultConcurrency = 5
-	DefaultType        = "all"
+	DefaultType        = "summary"
 
 	// Subdirectory layout under DefaultOutputDir:
 	//   output/
