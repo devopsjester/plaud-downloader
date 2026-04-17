@@ -104,7 +104,7 @@ func TestSplitByLLM(t *testing.T) {
 			t.Parallel()
 
 			mock := &mockSplitter{result: tt.splitterResult, err: tt.splitterErr}
-			results, err := SplitByLLM(context.Background(), mock, "meeting body text", tt.matches)
+			results, _, err := SplitByLLM(context.Background(), mock, "meeting body text", tt.matches)
 
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("SplitByLLM() error = %v, wantErr %v", err, tt.wantErr)
