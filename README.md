@@ -91,15 +91,15 @@ plaud-hub correlate --customers-file customers.yaml --calendar google --split-ll
 
 ### Correlate flags
 
-| Flag                   | Default    | Description                                                                |
-| ---------------------- | ---------- | -------------------------------------------------------------------------- |
-| `--customers-file`     | (required) | Path to customer registry YAML file                                        |
-| `--output-dir`         | `./output` | Directory containing downloaded files                                      |
-| `--keep`               | false      | Keep originals in output root (default is to move)                         |
-| `--min-confidence`     | `medium`   | Minimum confidence to act on: `high`, `medium`, or `low`                   |
-| `--calendar`           |            | Confirm matches via calendar attendees: `google` or `reclaim`              |
-| `--calendar-tolerance` | `15m`      | Time window around recording start to search for a matching calendar event |
-| `--split-llm`          |            | Split multi-customer summaries using an LLM: `github`                      |
+| Flag                   | Default    | Description                                                                 |
+| ---------------------- | ---------- | --------------------------------------------------------------------------- |
+| `--customers-file`     | (required) | Path to customer registry YAML file                                         |
+| `--output-dir`         | `./output` | Directory containing downloaded files                                       |
+| `--keep`               | false      | Keep originals in output root (default is to move)                          |
+| `--min-confidence`     | `medium`   | Minimum confidence to act on: `high`, `medium`, or `low`                    |
+| `--calendar`           |            | Confirm matches via calendar attendees: `google` or `reclaim`               |
+| `--calendar-tolerance` | `15m`      | Time window around recording start to search for a matching calendar event  |
+| `--split-llm`          |            | Split multi-customer summaries using an LLM: `github`                       |
 | `--keep-transcripts`   | false      | Keep transcript files in `downloaded/` after correlation (default: deleted) |
 
 ## Configuration

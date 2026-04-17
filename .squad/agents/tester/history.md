@@ -8,8 +8,6 @@
 - Spread new tests across a separate `_test.go` file (idiomatic Go) rather than appending to the existing file, to avoid needing to rewrite the import block.
 - `containsWord` uses word-boundary checks, so `"Beta corporation"` correctly matches customer `"Beta"`.
 
-
-
 ### 2026-04-16 — LLM split tests (splitter, github, correlate)
 
 - `SplitByLLM` had no early return for empty matches; added `if len(matches) == 0 { return nil, nil }` to prevent a vacuous LLM call and make the test contract clear.

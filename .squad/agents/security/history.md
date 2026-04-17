@@ -33,10 +33,10 @@
 
 **Findings summary:**
 
-| ID  | Severity    | Title                                       | Status               |
-|-----|-------------|---------------------------------------------|----------------------|
-| F-1 | Low         | Silent transcript deletion failure          | Fix recommended      |
-| F-2 | Theoretical | Symlink read via ParseRecordingInfo         | Accepted/documented  |
+| ID  | Severity    | Title                               | Status              |
+| --- | ----------- | ----------------------------------- | ------------------- |
+| F-1 | Low         | Silent transcript deletion failure  | Fix recommended     |
+| F-2 | Theoretical | Symlink read via ParseRecordingInfo | Accepted/documented |
 
 **Key patterns to reuse:**
 
