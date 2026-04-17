@@ -56,6 +56,7 @@
 - No hardcoded client IDs or secrets; all supplied by callers at runtime.
 
 **Open questions for Architect:**
+
 1. Token refresh: automatic (transparent 401 retry) or explicit functions?
 2. Pagination: `@odata.nextLink` (Graph) / `nextPageToken` (Google) not yet implemented.
 3. M365 tenant scope: `/common` endpoint in use — make `tenant_id` configurable?
